@@ -16,42 +16,66 @@ try:
     from langchain_huggingface import HuggingFaceEmbeddings
     from langchain_community.vectorstores import Chroma
     from langchain_core.documents import Document
+    from langchain_community.document_loaders import PyPDFLoader, CSVLoader, TextLoader
 except ImportError as e:
     print(f"라이브러리가 설치되지 않았습니다. (Error: {e})")
     print("터미널에 다음을 입력하세요:")
-    print("pip install langchain-community langchain-huggingface chromadb sentence-transformers")
+    print("pip install langchain-community langchain-huggingface chromadb sentence-transformers pypdf")
     exit()
+
+def load_document(file_path):
+    """파일 확장자에 따라 적절한 로더를 선택하여 문서를 로드합니다."""
+    ext = os.path.splitext(file_path)[1].lower()
+    
+    if ext == '.pdf':
+        print(f" PDF 파일을 로드합니다: {file_path}")
+        loader = PyPDFLoader(file_path)
+        return loader.load()
+    elif ext == '.csv':
+        print(f" CSV 파일을 로드합니다: {file_path}")
+        loader = CSVLoader(file_path)
+        return loader.load()
+    elif ext == '.txt':
+        print(f" 텍스트 파일을 로드합니다: {file_path}")
+        loader = TextLoader(file_path, encoding='utf-8')
+        return loader.load()
+    else:
+        print(f" 지원하지 않는 파일 형식입니다: {ext}")
+        return []
 
 def main():
     print("1. 로컬 임베딩 모델 로딩 중... (최초 실행 시 다운로드에 시간이 걸립니다)")
     # 한국어 처리에 강력한 오픈소스 모델 사용 (HuggingFace)
-    # CPU에서도 무리 없이 돌아가는 경량 모델입니다.
     embedding_model = HuggingFaceEmbeddings(
         model_name="jhgan/ko-sroberta-multitask"
     )
     print("모델 로딩 완료!")
 
     # ---------------------------------------------------------
-    # 2. 가상의 사내 데이터 준비 (Document Loading)
-    # company_knowledge.txt 파일에서 데이터를 읽어옵니다.
+    # 2. 문서 로딩 (Document Loading)
     # ---------------------------------------------------------
     current_dir = os.path.dirname(os.path.abspath(__file__))
-    file_path = os.path.join(current_dir, "company_knowledge.txt")
     
-    try:
-        with open(file_path, "r", encoding="utf-8") as f:
-            full_text = f.read()
-    except FileNotFoundError:
+    # 기본값은 company_knowledge.txt, 하지만 사용자가 다른 파일을 지정할 수 있게 함
+    print(f"\n 현재 폴더({current_dir})에 있는 파일을 로드할 수 있습니다.")
+    target_filename = input("로드할 파일명을 입력하세요 (엔터 치면 'company_knowledge.txt' 사용): ").strip()
+    
+    if not target_filename:
+        target_filename = "company_knowledge.txt"
+        
+    file_path = os.path.join(current_dir, target_filename)
+    
+    if not os.path.exists(file_path):
         print(f"파일을 찾을 수 없습니다: {file_path}")
         return
 
-    # 간단하게 줄바꿈 단위로 문서를 나눕니다. (빈 줄 제외)
-    # RecursiveCharacterTextSplitter :: v2
-    raw_documents = [line.strip() for line in full_text.split('\n') if line.strip()]
+    docs = load_document(file_path)
     
-    # LangChain Document 형식으로 변환
-    docs = [Document(page_content=text) for text in raw_documents]
-    print(f"문서 {len(docs)}개를 준비했습니다.")
+    if not docs:
+        print("문서 로드에 실패했거나 내용이 없습니다.")
+        return
+        
+    print(f"✅ 총 {len(docs)}개의 페이지(또는 청크)를 로드했습니다.")
 
     # ---------------------------------------------------------
     # 3. Vector DB 생성 및 저장 (Indexing)
@@ -70,7 +94,7 @@ def main():
     # ---------------------------------------------------------
     while True:
         print("\n" + "="*50)
-        query = input("🔍 궁금한 점을 물어보세요 (종료하려면 'exit' 입력): ")
+        query = input("궁금한 점을 물어보세요 (종료하려면 'exit' 입력): ")
         
         if query.lower() == 'exit':
             break
