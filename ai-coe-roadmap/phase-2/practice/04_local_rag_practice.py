@@ -33,15 +33,21 @@ def main():
 
     # ---------------------------------------------------------
     # 2. 가상의 사내 데이터 준비 (Document Loading)
-    # 실제로는 PDF나 텍스트 파일에서 읽어오는 부분입니다.
+    # company_knowledge.txt 파일에서 데이터를 읽어옵니다.
     # ---------------------------------------------------------
-    raw_documents = [
-        "AI CoE 팀은 2024년에 신설된 조직으로, 전사 AI 도입을 가속화하는 역할을 맡습니다.",
-        "우리 회사의 클라우드 비용 규정에 따르면, 월 100만원 이상의 GPU 인스턴스 사용은 CTO 승인이 필요합니다.",
-        "점심 식대 지원 한도는 2025년부터 12,000원으로 인상되었습니다.",
-        "AI 프로젝트 프로세스는 기획 -> PoC -> 검증 -> 배포 순서로 진행됩니다.",
-        "재택 근무는 주 2회 가능하며, 팀장 전결로 승인됩니다."
-    ]
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(current_dir, "company_knowledge.txt")
+    
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            full_text = f.read()
+    except FileNotFoundError:
+        print(f"파일을 찾을 수 없습니다: {file_path}")
+        return
+
+    # 간단하게 줄바꿈 단위로 문서를 나눕니다. (빈 줄 제외)
+    # RecursiveCharacterTextSplitter :: v2
+    raw_documents = [line.strip() for line in full_text.split('\n') if line.strip()]
     
     # LangChain Document 형식으로 변환
     docs = [Document(page_content=text) for text in raw_documents]
