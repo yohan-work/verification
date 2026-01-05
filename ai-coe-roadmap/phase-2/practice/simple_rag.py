@@ -1,9 +1,15 @@
 import os
+import requests
+import numpy as np
+from sentence_transformers import SentenceTransformer
+
+# Settings
+LLM_API_URL = "http://localhost:11434/api/generate"
+LLM_MODEL = "llama3"  # Changing to available model
 
 def load_knowledge_base(file_path):
     """
     Load the text file and split it into chunks based on sections.
-    Assumes sections are separated by double newlines or headers.
     """
     if not os.path.exists(file_path):
         print(f"Error: File not found at {file_path}")
@@ -30,31 +36,45 @@ def load_knowledge_base(file_path):
         
     return chunks
 
-def retrieve(query, chunks):
+def get_embeddings(texts, model):
     """
-    Simple keyword-based retrieval.
-    Returns the top 3 most relevant chunks.
+    Convert a list of texts into vectors (embeddings).
     """
-    query_tokens = set(query.split())
+    embeddings = model.encode(texts)
+    return embeddings
+
+def retrieve(query, chunk_embeddings, chunks, model, top_k=3):
+    """
+    Semantic search using Cosine Similarity.
+    """
+    # 1. Embed the query
+    query_embedding = model.encode([query])[0]
     
-    scores = []
-    for chunk in chunks:
-        score = sum(1 for token in query_tokens if token in chunk)
-        scores.append((score, chunk))
+    # 2. Calculate Cosine Similarity
+    # (A . B) / (|A| * |B|)
+    # Since sentence_transformers embeddings are often normalized, |A| and |B| are approx 1.
+    # So we can just do dot product.
+    scores = np.dot(chunk_embeddings, query_embedding)
     
-    scores.sort(key=lambda x: x[0], reverse=True)
+    # 3. Sort and get top_k
+    # argsort returns indices of sorted array (ascending), so we take last top_k and reverse
+    top_indices = np.argsort(scores)[-top_k:][::-1]
     
-    relevant_chunks = [chunk for score, chunk in scores[:3] if score > 0]
-    
-    if not relevant_chunks and chunks:
-        return []
-        
+    relevant_chunks = []
+    for idx in top_indices:
+        # Filter out low relevance if needed (e.g., score > 0.3)
+        if scores[idx] > 0.3:
+            relevant_chunks.append(chunks[idx])
+            
     return relevant_chunks
 
-def generate_prompt(query, context_chunks):
+def generate_answer(query, context_chunks):
     """
-    Constructs the prompt using the Context Injection pattern.
+    Call Ollama API to generate answer.
     """
+    if not context_chunks:
+        return "죄송합니다. 관련 정보를 찾을 수 없습니다."
+
     context_text = "\n---\n".join(context_chunks)
     
     prompt = f"""
@@ -65,18 +85,29 @@ def generate_prompt(query, context_chunks):
 1. [Context]에 없는 내용은 절대 지어내지 마.
 2. [Context]로 충분하지 않으면 "정보가 부족하여 알 수 없습니다"라고 답해.
 3. 답변은 친절하고 전문적인 어조로 작성해.
+4. 한국어로 답변해.
 
-### Context (검색된 자료)
----
+### Context
 {context_text}
----
 
-### Question (사용자 질문)
+### Question
 {query}
 
 ### Answer
 """
-    return prompt
+    
+    payload = {
+        "model": LLM_MODEL,
+        "prompt": prompt,
+        "stream": False
+    }
+    
+    try:
+        response = requests.post(LLM_API_URL, json=payload)
+        response.raise_for_status()
+        return response.json().get('response', 'Error: No response field')
+    except Exception as e:
+        return f"Error calling LLM: {str(e)}"
 
 def main():
     current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -85,6 +116,16 @@ def main():
     print("Loading knowledge base...")
     chunks = load_knowledge_base(knowledge_file)
     print(f"Loaded {len(chunks)} chunks.")
+    
+    print("Loading Embedding Model (skt/kogpt2-base-v2 is NOT for embedding, using a multilingual one)...")
+    # Using a good multilingual model or Korean specific one
+    model_name = "jhgan/ko-sroberta-multitask" 
+    print(f"Downloading/Loading model: {model_name}...")
+    model = SentenceTransformer(model_name)
+    
+    print("Creating Embeddings for Knowledge Base...")
+    chunk_embeddings = get_embeddings(chunks, model)
+    print("Embeddings ready.")
     
     print("\nStarting Chat Session (Type 'exit' to quit)")
     while True:
@@ -96,22 +137,21 @@ def main():
             continue
             
         print(f"\nSearching for match for: '{user_query}'...")
-        relevant_chunks = retrieve(user_query, chunks)
+        relevant_chunks = retrieve(user_query, chunk_embeddings, chunks, model)
         
         if not relevant_chunks:
-            print("No relevant information found in knowledge base.")
+            print("No relevant information found in knowledge base (Score too low).")
             continue
             
         print(f"Found {len(relevant_chunks)} relevant chunks.")
+        # Optional: Print retrieved chunks for debugging
+        # for i, chunk in enumerate(relevant_chunks):
+        #     print(f"--- Chunk {i+1} ---\n{chunk[:100]}...\n")
         
-        prompt = generate_prompt(user_query, relevant_chunks)
+        print("Generating answer with LLM...")
+        answer = generate_answer(user_query, relevant_chunks)
         
-        print("\n" + "="*50)
-        print("[Generated Prompt for LLM]")
-        print("="*50)
-        print(prompt)
-        print("="*50)
-        print("\n(This prompt would be sent to the LLM API to get the final answer.)")
+        print("\nA: " + answer)
 
 if __name__ == "__main__":
     main()
